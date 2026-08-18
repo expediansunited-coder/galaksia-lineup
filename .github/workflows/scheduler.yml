@@ -1,0 +1,29 @@
+name: Weekly Schedule Updater
+
+on:
+  schedule:
+    - cron: '0 18 * * 1'   # Monday 18:00 UTC (~20:00 Prague summer)
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install gspread oauth2client requests
+
+      - name: Write credentials
+        run: echo '${{ secrets.CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Run updater
+        env:
+          WORKFLOW_PAT: ${{ secrets.WORKFLOW_PAT }}
+        run: python update_schedule.py
