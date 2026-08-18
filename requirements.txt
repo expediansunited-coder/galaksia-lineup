@@ -1,0 +1,11 @@
+gspread
+oauth2client
+google-api-python-client
+google-auth
+google-auth-oauthlib
+Pillow
+pillow-heif
+requests
+rembg
+rawpy
+numpy
