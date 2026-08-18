@@ -5,7 +5,10 @@ import random
 import json
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+PRAGUE_TZ = ZoneInfo('Europe/Prague')
 import rawpy
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -329,6 +332,19 @@ def fit_font_width(font_path, text, max_w, start_size, min_size=14):
 # ============================================================
 # SHEETS HELPERS
 # ============================================================
+def parse_kickoff(match_date, time_str):
+    """Combine match_date + 'HH:MM' (or 'HHhMM') into a datetime, or None."""
+    s = (time_str or '').strip().replace('h', ':')
+    m = re.match(r'^(\d{1,2}):(\d{2})', s)
+    if not m:
+        m2 = re.match(r'^(\d{1,2})$', s)
+        if not m2:
+            return None
+        hh, mm = int(m2.group(1)), 0
+    else:
+        hh, mm = int(m.group(1)), int(m.group(2))
+    return datetime(match_date.year, match_date.month, match_date.day, hh, mm)
+
 def parse_date(value):
     s = (value or '').strip()
     if not s:
@@ -359,7 +375,7 @@ def build_team_league_map(client):
     return mapping
 
 def find_fixture(client, team, match_date):
-    """Return (home, away, match_type) or (None, None, None)."""
+    """Return (home, away, match_type, time_str) or (None, None, None, None)."""
     ss = client.open_by_key(INDEX_SHEET_ID)
     for tab in (FIXTURES_FRIENDLY_TAB, FIXTURES_LEAGUECUP_TAB):
         try:
@@ -373,10 +389,11 @@ def find_fixture(client, team, match_date):
                 continue
             home = (row[2] or '').strip()
             away = (row[3] or '').strip()
+            time_str = (row[1] or '').strip()   # column B = kickoff time
             mtype = (row[5] if len(row) > 5 else '').strip()
             if home.upper() == team.upper() or away.upper() == team.upper():
-                return home, away, mtype
-    return None, None, None
+                return home, away, mtype, time_str
+    return None, None, None, None
 
 def clean_team_name(name):
     s = (name or '').strip()
@@ -720,7 +737,7 @@ def run_11aside_lineups():
     league_cache = {}
 
     ss = client.open_by_key(LINEUPS_SHEET_ID)
-    today = datetime.now().date()
+    today = datetime.now(PRAGUE_TZ).date()
     generated = 0
 
     team_tabs = [w for w in ss.worksheets() if w.title.strip().upper() in OUR_TEAMS]
@@ -745,10 +762,21 @@ def run_11aside_lineups():
             subs = split_names(row[COL_SUBS]) if len(row) > COL_SUBS else []
             captain = (row[COL_CAPTAIN] or '').strip() if len(row) > COL_CAPTAIN else ''
 
-            home, away, match_type = find_fixture(client, team, match_date)
+            home, away, match_type, kickoff_str = find_fixture(client, team, match_date)
             if home is None:
                 errors.append('%s row %d (%s): no fixture found - not posted.'
                               % (team, i, match_date))
+                continue
+
+            # Skip if more than 1h before kickoff.
+            kickoff = parse_kickoff(match_date, kickoff_str)
+            if kickoff is None:
+                errors.append('%s row %d: missing/invalid kickoff time - not posted.' % (team, i))
+                continue
+            now = datetime.now(PRAGUE_TZ).replace(tzinfo=None)
+            if now < kickoff - timedelta(hours=1):
+                print('%s row %d: more than 1h before kickoff (%s) - skipping this run.'
+                      % (team, i, kickoff_str))
                 continue
 
             home_logo = resolve_logo(logo_files, drive, home, logo_cache)
@@ -804,7 +832,25 @@ def run_11aside_lineups():
             print('%s row %d: saved %s' % (team, i, out_path))
             generated += 1
 
-            print('  [meta] posting DISABLED for testing - not posted.')
+            # Upload + post story + cleanup
+            story_id = None
+            try:
+                story_url, story_id = upload_public_image(user_drive, out_path, POST_UPLOAD_FOLDER_ID)
+                print('  story url: %s' % story_url)
+                post_story_to_meta(story_url)
+            except Exception as e:
+                errors.append('%s row %d: Meta posting failed: %s' % (team, i, e))
+            finally:
+                if story_id:
+                    try:
+                        user_drive.files().delete(fileId=story_id).execute()
+                        print('  deleted temp Drive file %s' % story_id)
+                    except Exception as e:
+                        print('  could not delete %s: %s' % (story_id, e))
+
+            # Mark as sent so hourly re-runs don't repost
+            tab_ws.update_cell(i, COL_STATUS + 1, 'Sent')
+            print('%s row %d: marked Sent.' % (team, i))
 
     send_error_email(errors)
     print('Done. Generated %d image(s).' % generated)
