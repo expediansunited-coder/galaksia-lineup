@@ -1,0 +1,31 @@
+name: Lineup Poster
+
+on:
+  schedule:
+    - cron: '0 10-18 * * 0'   # every hour, 12:00–20:00 Prague (summer), Sunday
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write secret files
+        run: |
+          echo '${{ secrets.CREDENTIALS_JSON }}' > credentials.json
+          echo '${{ secrets.META_CONFIG_JSON }}' > meta_config.json
+          echo '${{ secrets.TOKEN_JSON }}' > token.json
+          echo '${{ secrets.CLIENT_SECRET_JSON }}' > client_secret.json
+
+      - name: Run script
+        run: python "lineup.py"
