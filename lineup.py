@@ -433,7 +433,8 @@ def resolve_logo(logo_files, drive, team_name, cache):
 
 def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
                        home_logo, away_logo, match_type, league_logo,
-                       home_name='', away_name=''):
+                       home_name='', away_name='', coaches=None):
+    coaches = coaches or []
     from PIL import ImageOps
     bg_fixed = ImageOps.exif_transpose(bg_img)   # respect EXIF orientation
     bg = cover_resize(bg_fixed.convert('RGB'), CANVAS_W, CANVAS_H)
@@ -554,18 +555,20 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
             draw.text((LIST_LEFT, y), t, font=sub_font, fill=WHITE)
             y += SUB_GAP
 
-    # COACHING STAFF (placeholder)
-    y += SECTION_GAP_BEFORE
-    sec_font = load_font(font_path, SECTION_SIZE)
-    draw.text((LIST_LEFT, y), 'COACHING STAFF:', font=sec_font, fill=GREEN)
-    y += SUB_GAP
-    sub_font = load_font(font_path, SUB_SIZE)
+    # COACHING STAFF (only rendered when coaches exist)
     last_line_bottom = y
-    for placeholder in ('COACH NAME', 'COACH NAME', 'COACH NAME'):
-        draw.text((LIST_LEFT, y), placeholder, font=sub_font, fill=WHITE)
-        lb = draw.textbbox((LIST_LEFT, y), placeholder, font=sub_font)
-        last_line_bottom = lb[3]
+    if coaches:
+        y += SECTION_GAP_BEFORE
+        sec_font = load_font(font_path, SECTION_SIZE)
+        draw.text((LIST_LEFT, y), 'COACHING STAFF:', font=sec_font, fill=GREEN)
         y += SUB_GAP
+        sub_font = load_font(font_path, SUB_SIZE)
+        for name in coaches:
+            t = name.upper()
+            draw.text((LIST_LEFT, y), t, font=sub_font, fill=WHITE)
+            lb = draw.textbbox((LIST_LEFT, y), t, font=sub_font)
+            last_line_bottom = lb[3]
+            y += SUB_GAP
 
     # ---- Bottom-right: FRIENDLY text OR league logo ----
     is_friendly = (match_type or '').strip().lower() == 'friendly'
