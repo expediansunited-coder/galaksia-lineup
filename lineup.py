@@ -29,7 +29,7 @@ except Exception as _e:
 # CONFIG
 # ============================================================
 CREDENTIALS_FILE = 'credentials.json'
-META_CONFIG_FILE = 'meta_config_11aside.json'
+META_CONFIG_FILE = 'meta_config.json'
 
 LINEUPS_SHEET_ID = '1T_Sc_t6n5E_tKpnDEjzd4-6th1T-kHexK-bGezxnZ30'
 # Tabs are named after the team (11A/11B/11C).
@@ -620,6 +620,24 @@ def upload_public_image(drive, image_path, folder_id):
             time.sleep(5 * (attempt + 1))
     raise RuntimeError('Drive upload failed after retries: %s' % last_err)
 
+def make_story_version(feed_img_path):
+    from PIL import ImageFilter
+    feed = Image.open(feed_img_path).convert('RGB')
+    bg = feed.copy()
+    scale = max(STORY_W / bg.width, STORY_H / bg.height)
+    bg = bg.resize((int(bg.width * scale), int(bg.height * scale)), Image.LANCZOS)
+    left = (bg.width - STORY_W) // 2
+    top = (bg.height - STORY_H) // 2
+    bg = bg.crop((left, top, left + STORY_W, top + STORY_H))
+    bg = bg.filter(ImageFilter.GaussianBlur(40))
+    fg = feed.copy()
+    fscale = min(STORY_W / fg.width, STORY_H / fg.height) * 0.92
+    fg = fg.resize((int(fg.width * fscale), int(fg.height * fscale)), Image.LANCZOS)
+    bg.paste(fg, ((STORY_W - fg.width) // 2, (STORY_H - fg.height) // 2))
+    out = feed_img_path.replace('.png', '_story.png')
+    bg.save(out, 'PNG', quality=95)
+    return out
+
 def _fb_page_photo(page_id, token, image_url, caption, published=True):
     r = requests.post('%s/%s/photos' % (GRAPH, page_id),
                       data={'url': image_url, 'caption': caption,
@@ -665,23 +683,35 @@ def _get_page_token(page_id, user_token):
 def post_story_to_meta(story_url):
     cfg = load_meta_config()
     page_id = cfg['page_id']; ig_id = cfg['ig_user_id']
-    user_token = cfg['page_access_token']
+    token_in = cfg['page_access_token']
     if not story_url:
         print('    [meta] ERROR: no story url; cannot post.')
         return
+
+    # Work out a usable Page token (works whether token_in is a User or Page token)
+    page_token = token_in
     try:
-        token = _get_page_token(page_id, user_token)
+        r = requests.get('%s/me/accounts' % GRAPH,
+                         params={'access_token': token_in, 'limit': 200})
+        r.raise_for_status()
+        for p in r.json().get('data', []):
+            if str(p.get('id')) == str(page_id):
+                page_token = p['access_token']
+                break
     except Exception as e:
-        print('    [meta] could not derive Page token: %s' % e)
-        token = user_token
+        print('    [meta] me/accounts lookup failed, using token as-is: %s' % e)
+
+    # Facebook story
     try:
-        photo = _fb_page_photo(page_id, token, story_url, '', published=False)
-        _fb_story(page_id, token, photo['id'])
+        photo = _fb_page_photo(page_id, page_token, story_url, '', published=False)
+        _fb_story(page_id, page_token, photo['id'])
         print('    [meta] FB story OK')
     except Exception as e:
         print('    [meta] FB story FAILED: %s' % e)
+
+    # Instagram story — use the Page token
     try:
-        _ig_publish(ig_id, user_token, story_url)
+        _ig_publish(ig_id, page_token, story_url)
         print('    [meta] IG story OK')
     except Exception as e:
         print('    [meta] IG story FAILED: %s' % e)
@@ -838,7 +868,8 @@ def run_11aside_lineups():
             # Upload + post story + cleanup
             story_id = None
             try:
-                story_url, story_id = upload_public_image(user_drive, out_path, POST_UPLOAD_FOLDER_ID)
+                story_path = make_story_version(out_path)
+                story_url, story_id = upload_public_image(user_drive, story_path, POST_UPLOAD_FOLDER_ID)
                 print('  story url: %s' % story_url)
                 post_story_to_meta(story_url)
             except Exception as e:
