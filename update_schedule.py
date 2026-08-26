@@ -23,7 +23,7 @@ OUR_TEAMS = ('11A', '11B', '11C')
 PRAGUE_TZ = ZoneInfo('Europe/Prague')
 
 # GitHub repo + workflow file to update
-GITHUB_REPO = 'YOUR_GH_USER/YOUR_REPO'          # e.g. 'expediansunited-coder/galaksia-lineup'
+GITHUB_REPO = 'expediansunited-coder/galaksia-lineup'          # e.g. 'expediansunited-coder/galaksia-lineup'
 WORKFLOW_PATH = '.github/workflows/main.yml'
 GITHUB_TOKEN = os.environ.get('WORKFLOW_PAT', '')
 
