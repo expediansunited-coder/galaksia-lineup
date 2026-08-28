@@ -35,6 +35,8 @@ LINEUPS_SHEET_ID = '1T_Sc_t6n5E_tKpnDEjzd4-6th1T-kHexK-bGezxnZ30'
 # Tabs are named after the team (11A/11B/11C).
 # Columns (0-based): A Timestamp | B Match Date | C Starters | D Subs | E Captain | F Status
 COL_MATCH_DATE = 1; COL_STARTERS = 2; COL_SUBS = 3; COL_CAPTAIN = 4; COL_STATUS = 5
+COL_MAIN_COACH = 5   # F
+COL_ASSISTANTS = 6   # G
 
 INDEX_SHEET_ID = '1j6ZN3N8aXnB9vKFdWeXhY-fyo8aH1JlmhWZWHwzgu-E'
 INDEX_TAB = 'Index'
@@ -780,6 +782,9 @@ def run_11aside_lineups():
             starters = split_names(row[COL_STARTERS]) if len(row) > COL_STARTERS else []
             subs = split_names(row[COL_SUBS]) if len(row) > COL_SUBS else []
             captain = (row[COL_CAPTAIN] or '').strip() if len(row) > COL_CAPTAIN else ''
+            main_coach = (row[COL_MAIN_COACH] or '').strip() if len(row) > COL_MAIN_COACH else ''
+            assistants = split_names(row[COL_ASSISTANTS]) if len(row) > COL_ASSISTANTS else []
+            coaches = ([main_coach] if main_coach else []) + assistants
 
             home, away, match_type, kickoff_str = find_fixture(client, team, match_date)
             if home is None:
@@ -839,7 +844,8 @@ def run_11aside_lineups():
                 img = build_lineup_image(bg_img, font_path, team, starters, subs, captain,
                                          home_logo, away_logo, match_type, league_logo,
                                          home_name=display_team_name(home),
-                                         away_name=display_team_name(away))
+                                         away_name=display_team_name(away),
+                                         coaches=coaches)
             except Exception as e:
                 errors.append('%s row %d: image build failed: %s' % (team, i, e))
                 continue
