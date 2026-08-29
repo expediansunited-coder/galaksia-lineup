@@ -1133,7 +1133,9 @@ def run_11aside_lineups():
                     print('  11B background not found - using random.')
                     bg_choice = random.choice(bg_files)
             else:
-                bg_choice = random.choice(bg_files)
+                pool = [f for f in bg_files
+                        if _norm(os.path.splitext(f['name'])[0]) != _norm('11B')]
+                bg_choice = random.choice(pool if pool else bg_files)
             try:
                 bg_bytes = download_file_bytes(drive, bg_choice['id'])
                 name_lower = bg_choice['name'].lower()
