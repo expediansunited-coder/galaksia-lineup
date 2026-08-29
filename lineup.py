@@ -7,6 +7,7 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from rembg import remove
 
 PRAGUE_TZ = ZoneInfo('Europe/Prague')
 import rawpy
@@ -34,9 +35,10 @@ META_CONFIG_FILE = 'meta_config.json'
 LINEUPS_SHEET_ID = '1T_Sc_t6n5E_tKpnDEjzd4-6th1T-kHexK-bGezxnZ30'
 # Tabs are named after the team (11A/11B/11C).
 # Columns (0-based): A Timestamp | B Match Date | C Starters | D Subs | E Captain | F Status
-COL_MATCH_DATE = 1; COL_STARTERS = 2; COL_SUBS = 3; COL_CAPTAIN = 4; COL_STATUS = 5
-COL_MAIN_COACH = 5   # F
-COL_ASSISTANTS = 6   # G
+COL_MATCH_DATE = 1; COL_STARTERS = 2; COL_SUBS = 3; COL_CAPTAIN = 4
+COL_MAIN_COACH = 5; COL_ASSISTANTS = 6; COL_STATUS = 7; COL_PICTURE = 8
+RECENT_ROWS = 13
+PLAYERS_ROOT_FOLDER_ID = '1ul10SG2lD5vOjwR0hpQPPb6FqLWFcc3N'
 
 INDEX_SHEET_ID = '1j6ZN3N8aXnB9vKFdWeXhY-fyo8aH1JlmhWZWHwzgu-E'
 INDEX_TAB = 'Index'
@@ -58,6 +60,10 @@ GALAKSIA_LOGO_NAME = 'galaksia praha 23'
 # 4:5 canvas
 CANVAS_W = 1080
 CANVAS_H = 1350
+
+# Player photo placement
+PHOTO_CENTER_X = int(CANVAS_W * 0.50)
+PHOTO_BOX_TOP  = int(CANVAS_H * 0.355)
 
 WHITE = (255, 255, 255)
 GREEN = (75, 186, 105)
@@ -409,6 +415,174 @@ def display_team_name(name):
         return 'GP23 ' + n.upper()
     return n
 
+def list_subfolders(drive, parent_id):
+    out = []
+    page_token = None
+    while True:
+        resp = drive.files().list(
+            q=("'%s' in parents and mimeType = 'application/vnd.google-apps.folder' "
+               "and trashed = false" % parent_id),
+            fields='nextPageToken, files(id,name)',
+            pageToken=page_token
+        ).execute()
+        out.extend(resp.get('files', []))
+        page_token = resp.get('nextPageToken')
+        if not page_token:
+            break
+    return out
+
+
+def list_images_in_folder(drive, folder_id):
+    out = []
+    page_token = None
+    while True:
+        resp = drive.files().list(
+            q="'%s' in parents and trashed = false" % folder_id,
+            fields='nextPageToken, files(id,name,mimeType)',
+            pageToken=page_token
+        ).execute()
+        for f in resp.get('files', []):
+            mt = f.get('mimeType', '')
+            if mt.startswith('application/vnd.google-apps'):
+                continue
+            if f['name'].lower().endswith(IMG_EXT) or mt.startswith('image/'):
+                out.append(f)
+        page_token = resp.get('nextPageToken')
+        if not page_token:
+            break
+    return out
+
+
+_PLAYER_FOLDERS = None
+
+def get_player_folders(drive):
+    global _PLAYER_FOLDERS
+    if _PLAYER_FOLDERS is None:
+        top = list_subfolders(drive, PLAYERS_ROOT_FOLDER_ID)
+        indiv = None
+        for f in top:
+            if _norm(f['name']) == _norm('Individual Photos'):
+                indiv = f['id']
+                break
+        if indiv:
+            _PLAYER_FOLDERS = list_subfolders(drive, indiv)
+        else:
+            _PLAYER_FOLDERS = top
+    return _PLAYER_FOLDERS
+
+
+def find_player_folder_id(drive, player_name):
+    target = _norm(player_name)
+    if not target:
+        return None
+    folders = get_player_folders(drive)
+
+    def base_norm(folder_name):
+        stripped = re.sub(r'\s*\([^)]*\)\s*$', '', folder_name)
+        return _norm(stripped)
+
+    for f in folders:
+        if base_norm(f['name']) == target:
+            return f['id']
+    for f in folders:
+        if _norm(f['name']) == target:
+            return f['id']
+    for f in folders:
+        fb = base_norm(f['name'])
+        if fb.startswith(target) or target.startswith(fb) \
+           or target in fb or fb in target:
+            return f['id']
+    for f in folders:
+        fn = _norm(f['name'])
+        if fn.startswith(target) or target.startswith(fn) \
+           or target in fn or fn in target:
+            return f['id']
+    return None
+
+
+def get_random_player_photo(drive, player_name):
+    folder_id = find_player_folder_id(drive, player_name)
+    if not folder_id:
+        print('    [photo] "%s": NO FOLDER matched' % player_name)
+        return None
+    images = list_images_in_folder(drive, folder_id)
+    if not images:
+        print('    [photo] "%s": folder found but NO IMAGES' % player_name)
+        return None
+
+    images = [im for im in images
+              if os.path.splitext(im['name'])[0].strip().lower() == 'front']
+    if not images:
+        print('    [photo] "%s": no "front" image in folder' % player_name)
+        return None
+
+    candidates = images[:]
+    random.shuffle(candidates)
+    for choice in candidates:
+        try:
+            data = download_file_bytes(drive, choice['id'])
+            Image.open(io.BytesIO(data)).verify()
+            cut = remove(data)
+            img = Image.open(io.BytesIO(cut)).convert('RGBA')
+            img = crop_to_content(img)
+            w, h = img.size
+            img = img.crop((0, 0, w, int(h * 5 / 8)))
+            img, content_bbox = add_white_glow(img, radius=8, layers=1, expand=1)
+            img.info['content_bbox'] = content_bbox
+            print('    [photo] "%s": used %s' % (player_name, choice['name']))
+            return img
+        except Exception as e:
+            print('    [photo] "%s": skip %s (%s)'
+                  % (player_name, choice.get('name', '?'), e))
+            continue
+
+    print('    [photo] "%s": no usable image after trying %d'
+          % (player_name, len(images)))
+    return None
+
+
+def pick_player_with_photo(drive, match_players, recent_names):
+    recent_norm = [_norm(n) for n in recent_names if n]
+
+    preferred = [p for p in match_players if _norm(p) not in recent_norm]
+    random.shuffle(preferred)
+    for p in preferred:
+        photo = get_random_player_photo(drive, p)
+        if photo is not None:
+            return p, photo
+
+    for rn in recent_names:
+        for p in match_players:
+            if _norm(p) == _norm(rn):
+                photo = get_random_player_photo(drive, p)
+                if photo is not None:
+                    return p, photo
+    return None, None
+
+
+def crop_to_content(img):
+    bbox = img.getbbox()
+    return img.crop(bbox) if bbox else img
+
+
+def add_white_glow(img, radius=25, layers=3, expand=140):
+    from PIL import ImageFilter
+    pad = expand
+    base = Image.new('RGBA', (img.width + pad * 2, img.height + pad * 2), (0, 0, 0, 0))
+    base.alpha_composite(img, (pad, pad))
+
+    alpha = base.split()[3]
+    white = Image.new('RGBA', base.size, (255, 255, 255, 0))
+    white.putalpha(alpha)
+    glow = Image.new('RGBA', base.size, (255, 255, 255, 0))
+    for i in range(layers):
+        b = white.filter(ImageFilter.GaussianBlur(radius * (i + 1)))
+        glow = Image.alpha_composite(glow, b)
+
+    out = Image.alpha_composite(glow, base)
+    content_bbox = (pad, pad, pad + img.width, pad + img.height)
+    return out, content_bbox
+
 # ============================================================
 # IMAGE BUILD
 # ============================================================
@@ -435,7 +609,7 @@ def resolve_logo(logo_files, drive, team_name, cache):
 
 def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
                        home_logo, away_logo, match_type, league_logo,
-                       home_name='', away_name='', coaches=None):
+                       home_name='', away_name='', coaches=None, player_photo=None):
     coaches = coaches or []
     from PIL import ImageOps
     bg_fixed = ImageOps.exif_transpose(bg_img)   # respect EXIF orientation
@@ -532,6 +706,26 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
             away_right = x_cursor  # away logo's right edge
         x_cursor = lx - TOPLOGO_GAP
         first = False
+
+    # Player/coach photo — after teams logos+names, before the rest.
+    if player_photo is not None:
+        ph = player_photo.copy()
+        cb = ph.info.get('content_bbox', (0, 0, ph.width, ph.height))
+        cl, ct, cr, cbot = cb
+        content_h = cbot - ct
+        bottom = CANVAS_H
+        top = PHOTO_BOX_TOP - int(0.10 * CANVAS_H)
+        target_content_h = bottom - top
+        scale = target_content_h / content_h
+        ph = ph.resize((max(1, int(round(ph.width * scale))),
+                        max(1, int(round(ph.height * scale)))), Image.LANCZOS)
+        sct = int(round(ct * scale))
+        scl = int(round(cl * scale)); scr = int(round(cr * scale))
+        content_cx = (scl + scr) / 2
+        py = top - sct
+        block_center_x = (PHOTO_CENTER_X + CANVAS_W) / 2
+        px = int(round(block_center_x - content_cx))
+        bg.alpha_composite(ph, (px, py))
 
     # ---- Players list ----
     y = LIST_TOP
@@ -824,7 +1018,15 @@ def run_11aside_lineups():
                             errors.append('%s row %d: no league logo for "%s".' % (team, i, league))
                     league_logo = league_cache[lk]
 
-            bg_choice = random.choice(bg_files)
+            # 11B uses its named background; others keep random.
+            if team == '11B':
+                bg_choice = next((f for f in bg_files
+                                  if _norm(os.path.splitext(f['name'])[0]) == _norm('11B')), None)
+                if bg_choice is None:
+                    print('  11B background not found - using random.')
+                    bg_choice = random.choice(bg_files)
+            else:
+                bg_choice = random.choice(bg_files)
             try:
                 bg_bytes = download_file_bytes(drive, bg_choice['id'])
                 name_lower = bg_choice['name'].lower()
@@ -840,12 +1042,30 @@ def run_11aside_lineups():
                 errors.append('%s row %d: background load failed: %s' % (team, i, e))
                 continue
 
+            # Pick a player/coach photo (starters + subs + coaches)
+            recent_names = []
+            for r in range(i - 2, 0, -1):
+                prev = data[r - 1]
+                if len(prev) <= COL_PICTURE:
+                    continue
+                pic = (prev[COL_PICTURE] or '').strip()
+                recent_names.append(pic)
+                if len(recent_names) >= RECENT_ROWS:
+                    break
+            recent_names = [n for n in recent_names if n]
+            recent_lru_first = list(reversed(recent_names))
+            photo_candidates = starters + subs + coaches
+            chosen_name, player_photo = pick_player_with_photo(
+                drive, photo_candidates, recent_lru_first)
+            if chosen_name is None:
+                print('%s row %d: no player photo available.' % (team, i))
+
             try:
                 img = build_lineup_image(bg_img, font_path, team, starters, subs, captain,
                                          home_logo, away_logo, match_type, league_logo,
                                          home_name=display_team_name(home),
                                          away_name=display_team_name(away),
-                                         coaches=coaches)
+                                         coaches=coaches, player_photo=player_photo)
             except Exception as e:
                 errors.append('%s row %d: image build failed: %s' % (team, i, e))
                 continue
@@ -857,11 +1077,11 @@ def run_11aside_lineups():
             print('%s row %d: saved %s' % (team, i, out_path))
             generated += 1
 
-            story_path = make_story_version(out_path)
+            make_story_version(out_path)
 
             if POST_ONLY:
-                repo_raw = 'https://raw.githubusercontent.com/OWNER/REPO/main/'
-                story_url = repo_raw + story_path.replace('\\', '/')
+                repo_raw = 'https://raw.githubusercontent.com/expediansunited-coder/galaksia-lineup/main/'
+                story_url = repo_raw + out_path.replace('.png', '_story.png').replace('\\', '/')
                 print('  story url: %s' % story_url)
                 posted_ok = False
                 try:
@@ -871,11 +1091,15 @@ def run_11aside_lineups():
                     errors.append('%s row %d: Meta posting failed: %s' % (team, i, e))
 
                 if posted_ok:
+                    if chosen_name:
+                        tab_ws.update_cell(i, COL_PICTURE + 1, chosen_name)
                     tab_ws.update_cell(i, COL_STATUS + 1, 'Sent')
                     print('%s row %d: marked Sent.' % (team, i))
                 else:
                     print('%s row %d: NOT marked Sent (posting failed).' % (team, i))
             else:
+                if chosen_name:
+                    tab_ws.update_cell(i, COL_PICTURE + 1, chosen_name)
                 print('  generate-only: image saved, not posting.')
 
     send_error_email(errors)
