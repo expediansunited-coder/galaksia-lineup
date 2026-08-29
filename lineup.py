@@ -40,6 +40,8 @@ COL_MAIN_COACH = 5; COL_ASSISTANTS = 6; COL_STATUS = 7; COL_PICTURE = 8
 RECENT_ROWS = 13
 PLAYERS_ROOT_FOLDER_ID = '1ul10SG2lD5vOjwR0hpQPPb6FqLWFcc3N'
 
+NUMBERS_SHEET_ID = '1AOHk58LP2RV4RK5M8HdYhMPbS0Ue5QQWK2OJWwlCCig'
+
 INDEX_SHEET_ID = '1j6ZN3N8aXnB9vKFdWeXhY-fyo8aH1JlmhWZWHwzgu-E'
 INDEX_TAB = 'Index'
 IDX_COL_TEAM = 0; IDX_COL_LEAGUE = 2
@@ -235,6 +237,86 @@ def find_logo_file(logo_files, sheet_name):
 # ============================================================
 # IMAGE HELPERS
 # ============================================================
+def load_numbers_tab(client, tab_name):
+    """Return list of {name, match, c2, c3list} from a numbers tab, or []."""
+    try:
+        ws = client.open_by_key(NUMBERS_SHEET_ID).worksheet(tab_name)
+    except Exception:
+        return []
+    data = ws.get_all_values()
+    out = []
+    for row in data[1:]:
+        if len(row) < 2:
+            continue
+        name = (row[0] or '').strip()
+        if not name:
+            continue
+        match = (row[1] or '').strip() if len(row) > 1 else ''
+        c2 = (row[2] or '').strip() if len(row) > 2 else ''
+        c3raw = (row[4] or '').strip() if len(row) > 4 else ''
+        # 3rd choice may be "15/17/21"
+        c3list = [x.strip() for x in re.split(r'[\/,]', c3raw) if x.strip()]
+        out.append({'name': name, 'match': match, 'c2': c2, 'c3list': c3list})
+    return out
+
+
+def find_number_entry(entries, player_name):
+    """Fuzzy match a player to a numbers-tab entry."""
+    target = _norm(player_name)
+    if not target:
+        return None
+    # exact-ish first
+    for e in entries:
+        if _norm(e['name']) == target:
+            return e
+    # token overlap (partial / accents already stripped by _norm/_tokens)
+    ptoks = set(_tokens(player_name))
+    best = None
+    for e in entries:
+        etoks = set(_tokens(e['name']))
+        if not etoks:
+            continue
+        if ptoks <= etoks or etoks <= ptoks:
+            return e
+        if ptoks & etoks:
+            best = e
+    return best
+
+
+def assign_numbers(players, entries):
+    """players: ordered list of names. entries: numbers-tab rows.
+    Returns {name: number_string}. Conflict rules per spec."""
+    used = set()
+    result = {}
+
+    def take(n):
+        n = (n or '').strip()
+        if n and n not in used:
+            used.add(n)
+            return n
+        return None
+
+    for p in players:
+        e = find_number_entry(entries, p)
+        num = None
+        if e:
+            num = take(e['match'])
+            if num is None:
+                num = take(e['c2'])
+            if num is None:
+                for c in e['c3list']:
+                    num = take(c)
+                    if num:
+                        break
+        if num is None:
+            # random free number 1..99 not used
+            free = [str(x) for x in range(1, 100) if str(x) not in used]
+            num = random.choice(free) if free else ''
+            if num:
+                used.add(num)
+        result[p] = num
+    return result
+
 def load_font(font_path, size):
     if font_path and os.path.exists(font_path):
         try:
@@ -609,8 +691,10 @@ def resolve_logo(logo_files, drive, team_name, cache):
 
 def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
                        home_logo, away_logo, match_type, league_logo,
-                       home_name='', away_name='', coaches=None, player_photo=None):
+                       home_name='', away_name='', coaches=None, player_photo=None,
+                       number_map=None):
     coaches = coaches or []
+    number_map = number_map or {}
     from PIL import ImageOps
     bg_fixed = ImageOps.exif_transpose(bg_img)   # respect EXIF orientation
     bg = cover_resize(bg_fixed.convert('RGB'), CANVAS_W, CANVAS_H)
@@ -726,15 +810,21 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
         block_center_x = (PHOTO_CENTER_X + CANVAS_W) / 2
         px = int(round(block_center_x - content_cx))
         bg.alpha_composite(ph, (px, py))
-
+    
+    # width reserved for the jersey number (2 digits), name starts after it
+    num_gap = int(CANVAS_W * 0.045)   # space for number + small gap
+                           
     # ---- Players list ----
     y = LIST_TOP
     starter_font = load_font(font_path, STARTER_SIZE)
     for name in starters:
+        num = str(number_map.get(name, '') or '')
         t = name.upper()
         if name.strip().lower() == cap_norm:
             t += ' (C)'
-        draw.text((LIST_LEFT, y), t, font=starter_font, fill=WHITE)
+        if num:
+            draw.text((LIST_LEFT, y), num, font=starter_font, fill=WHITE)
+        draw.text((LIST_LEFT + num_gap, y), t, font=starter_font, fill=WHITE)
         y += STARTER_GAP
 
     # SUBS
@@ -745,10 +835,13 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
         y += SUB_GAP
         sub_font = load_font(font_path, SUB_SIZE)
         for name in subs:
+            num = str(number_map.get(name, '') or '')
             t = name.upper()
             if name.strip().lower() == cap_norm:
                 t += ' (C)'
-            draw.text((LIST_LEFT, y), t, font=sub_font, fill=WHITE)
+            if num:
+                draw.text((LIST_LEFT, y), num, font=sub_font, fill=WHITE)
+            draw.text((LIST_LEFT + num_gap, y), t, font=sub_font, fill=WHITE)
             y += SUB_GAP
 
     # COACHING STAFF (only rendered when coaches exist)
@@ -957,6 +1050,19 @@ def run_11aside_lineups():
 
     team_tabs = [w for w in ss.worksheets() if w.title.strip().upper() in OUR_TEAMS]
 
+    num_cache = {}
+    def numbers_for_team(team):
+        if team in num_cache:
+            return num_cache[team]
+        if team == '11A':
+            entries = load_numbers_tab(client, '11A') + load_numbers_tab(client, '11B')
+        elif team == '11B':
+            entries = load_numbers_tab(client, '11B') + load_numbers_tab(client, '11A')
+        else:  # 11C or other: both tabs
+            entries = load_numbers_tab(client, '11A') + load_numbers_tab(client, '11B')
+        num_cache[team] = entries
+        return entries
+
     for tab_ws in team_tabs:
         team = tab_ws.title.strip().upper()
         data = tab_ws.get_all_values()
@@ -979,6 +1085,7 @@ def run_11aside_lineups():
             main_coach = (row[COL_MAIN_COACH] or '').strip() if len(row) > COL_MAIN_COACH else ''
             assistants = split_names(row[COL_ASSISTANTS]) if len(row) > COL_ASSISTANTS else []
             coaches = ([main_coach] if main_coach else []) + assistants
+            number_map = assign_numbers(starters + subs, numbers_for_team(team))
 
             home, away, match_type, kickoff_str = find_fixture(client, team, match_date)
             if home is None:
@@ -1065,7 +1172,8 @@ def run_11aside_lineups():
                                          home_logo, away_logo, match_type, league_logo,
                                          home_name=display_team_name(home),
                                          away_name=display_team_name(away),
-                                         coaches=coaches, player_photo=player_photo)
+                                         coaches=coaches, player_photo=player_photo,
+                                         number_map=number_map)
             except Exception as e:
                 errors.append('%s row %d: image build failed: %s' % (team, i, e))
                 continue
