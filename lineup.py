@@ -815,6 +815,15 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
     
     # width reserved for the jersey number (2 digits), name starts after it
     num_gap = int(CANVAS_W * 0.045)   # space for number + small gap
+
+    def by_number(name):
+        v = number_map.get(name, '')
+        try:
+            return int(re.sub(r'[^\d]', '', str(v)))
+        except (ValueError, TypeError):
+            return 9999
+    starters = sorted(starters, key=by_number)
+    subs = sorted(subs, key=by_number)
                            
     # ---- Players list ----
     y = LIST_TOP
