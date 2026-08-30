@@ -37,7 +37,7 @@ LINEUPS_SHEET_ID = '1T_Sc_t6n5E_tKpnDEjzd4-6th1T-kHexK-bGezxnZ30'
 # Columns (0-based): A Timestamp | B Match Date | C Starters | D Subs | E Captain | F Status
 COL_MATCH_DATE = 1; COL_STARTERS = 2; COL_SUBS = 3; COL_CAPTAIN = 4
 COL_MAIN_COACH = 5; COL_ASSISTANTS = 6; COL_STATUS = 7; COL_PICTURE = 8
-RECENT_ROWS = 13
+RECENT_ROWS = 20
 PLAYERS_ROOT_FOLDER_ID = '1ul10SG2lD5vOjwR0hpQPPb6FqLWFcc3N'
 
 NUMBERS_SHEET_ID = '1AOHk58LP2RV4RK5M8HdYhMPbS0Ue5QQWK2OJWwlCCig'
@@ -252,7 +252,7 @@ def load_numbers_tab(client, tab_name):
         if not name:
             continue
         match = (row[1] or '').strip() if len(row) > 1 else ''
-        c2 = (row[2] or '').strip() if len(row) > 2 else ''
+        c2 = (row[3] or '').strip() if len(row) > 3 else ''
         c3raw = (row[4] or '').strip() if len(row) > 4 else ''
         # 3rd choice may be "15/17/21"
         c3list = [x.strip() for x in re.split(r'[\/,]', c3raw) if x.strip()]
@@ -315,6 +315,7 @@ def assign_numbers(players, entries):
             if num:
                 used.add(num)
         result[p] = num
+        print('    [number] %s -> %s (%s)' % (p, num, 'matched' if e else 'NO ENTRY'))
     return result
 
 def load_font(font_path, size):
@@ -556,7 +557,7 @@ def get_player_folders(drive):
 def find_player_folder_id(drive, player_name):
     target = _norm(player_name)
     if not target:
-        return None
+        return None, None
     folders = get_player_folders(drive)
 
     def base_norm(folder_name):
@@ -565,25 +566,25 @@ def find_player_folder_id(drive, player_name):
 
     for f in folders:
         if base_norm(f['name']) == target:
-            return f['id']
+            return f['id'], f['name']
     for f in folders:
         if _norm(f['name']) == target:
-            return f['id']
+            return f['id'], f['name']
     for f in folders:
         fb = base_norm(f['name'])
         if fb.startswith(target) or target.startswith(fb) \
            or target in fb or fb in target:
-            return f['id']
+            return f['id'], f['name']
     for f in folders:
         fn = _norm(f['name'])
         if fn.startswith(target) or target.startswith(fn) \
            or target in fn or fn in target:
-            return f['id']
-    return None
+            return f['id'], f['name']
+    return None, None
 
 
 def get_random_player_photo(drive, player_name):
-    folder_id = find_player_folder_id(drive, player_name)
+    folder_id, folder_name = find_player_folder_id(drive, player_name)
     if not folder_id:
         print('    [photo] "%s": NO FOLDER matched' % player_name)
         return None
@@ -611,7 +612,8 @@ def get_random_player_photo(drive, player_name):
             img = img.crop((0, 0, w, int(h * 5 / 8)))
             img, content_bbox = add_white_glow(img, radius=8, layers=1, expand=1)
             img.info['content_bbox'] = content_bbox
-            print('    [photo] "%s": used %s' % (player_name, choice['name']))
+            img.info['folder_name'] = folder_name
+            print('    [photo] "%s": used %s (folder: %s)' % (player_name, choice['name'], folder_name))
             return img
         except Exception as e:
             print('    [photo] "%s": skip %s (%s)'
@@ -631,14 +633,14 @@ def pick_player_with_photo(drive, match_players, recent_names):
     for p in preferred:
         photo = get_random_player_photo(drive, p)
         if photo is not None:
-            return p, photo
+            return photo.info.get('folder_name', p), photo
 
     for rn in recent_names:
         for p in match_players:
             if _norm(p) == _norm(rn):
                 photo = get_random_player_photo(drive, p)
                 if photo is not None:
-                    return p, photo
+                    return photo.info.get('folder_name', p), photo
     return None, None
 
 
@@ -1061,6 +1063,7 @@ def run_11aside_lineups():
         else:  # 11C or other: both tabs
             entries = load_numbers_tab(client, '11A') + load_numbers_tab(client, '11B')
         num_cache[team] = entries
+        print('  [numbers] team %s: %d entries loaded' % (team, len(entries)))
         return entries
 
     for tab_ws in team_tabs:
