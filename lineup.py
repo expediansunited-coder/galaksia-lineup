@@ -633,14 +633,14 @@ def pick_player_with_photo(drive, match_players, recent_names):
     for p in preferred:
         photo = get_random_player_photo(drive, p)
         if photo is not None:
-            return photo.info.get('folder_name', p), photo
+            return p, photo
 
     for rn in recent_names:
         for p in match_players:
             if _norm(p) == _norm(rn):
                 photo = get_random_player_photo(drive, p)
                 if photo is not None:
-                    return photo.info.get('folder_name', p), photo
+                    return p, photo
     return None, None
 
 
@@ -1175,11 +1175,14 @@ def run_11aside_lineups():
                     break
             recent_names = [n for n in recent_names if n]
             recent_lru_first = list(reversed(recent_names))
-            photo_candidates = starters + subs + coaches
-            chosen_name, player_photo = pick_player_with_photo(
-                drive, photo_candidates, recent_lru_first)
-            if chosen_name is None:
-                print('%s row %d: no player photo available.' % (team, i))
+            if team == '11B':
+                photo_candidates = starters + subs + coaches
+                chosen_name, player_photo = pick_player_with_photo(
+                    drive, photo_candidates, recent_lru_first)
+                if chosen_name is None:
+                    print('%s row %d: no player photo available.' % (team, i))
+            else:
+                chosen_name, player_photo = None, None
 
             try:
                 img = build_lineup_image(bg_img, font_path, team, starters, subs, captain,
