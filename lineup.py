@@ -492,8 +492,8 @@ def clean_team_name(name):
     return s.strip()
 
 def display_team_name(name):
-    """Add 'GP23 ' prefix to Galaksia team codes."""
-    n = (name or '').strip()
+    """Strip z.s./a.s. suffix, and add 'GP23 ' prefix to Galaksia team codes."""
+    n = clean_team_name(name)
     if _norm(n) in GALAKSIA_TEAM_CODES or 'galaksia' in n.lower():
         return 'GP23 ' + n.upper()
     return n
