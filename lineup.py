@@ -955,7 +955,8 @@ def _fb_story(page_id, token, photo_id):
 def _ig_publish(ig_id, token, image_url):
     data = {'image_url': image_url, 'access_token': token, 'media_type': 'STORIES'}
     c = requests.post('%s/%s/media' % (GRAPH, ig_id), data=data)
-    c.raise_for_status()
+    if not c.ok:
+        raise RuntimeError('IG /media error %s: %s' % (c.status_code, c.text))
     creation_id = c.json()['id']
     for _ in range(10):
         st = requests.get('%s/%s' % (GRAPH, creation_id),
@@ -1001,11 +1002,15 @@ def post_story_to_meta(story_url):
     except Exception as e:
         print('    [meta] me/accounts lookup failed, using token as-is: %s' % e)
 
+    fb_ok = False
+    ig_ok = False
+
     # Facebook story
     try:
         photo = _fb_page_photo(page_id, page_token, story_url, '', published=False)
         _fb_story(page_id, page_token, photo['id'])
         print('    [meta] FB story OK')
+        fb_ok = True
     except Exception as e:
         print('    [meta] FB story FAILED: %s' % e)
 
@@ -1013,8 +1018,12 @@ def post_story_to_meta(story_url):
     try:
         _ig_publish(ig_id, page_token, story_url)
         print('    [meta] IG story OK')
+        ig_ok = True
     except Exception as e:
         print('    [meta] IG story FAILED: %s' % e)
+
+    if not (fb_ok and ig_ok):
+        raise RuntimeError('Meta posting incomplete (FB=%s, IG=%s).' % (fb_ok, ig_ok))
 
 # ============================================================
 # ERROR EMAIL
