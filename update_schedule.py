@@ -2,10 +2,12 @@ import os
 import re
 import base64
 import json
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import gspread
+from gspread.exceptions import APIError
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
 
@@ -51,6 +53,15 @@ def parse_date(value):
             continue
     return None
 
+def retry_gspread(fn, *args, **kwargs):
+    for attempt in range(5):
+        try:
+            return fn(*args, **kwargs)
+        except APIError as e:
+            if '503' not in str(e) or attempt == 4:
+                raise
+            time.sleep(2 ** attempt)
+
 def match_weekdays_next_7_days(client):
     """Return a set of cron day-of-week numbers (Sun=0..Sat=6) that have an
     11-a-side match from tomorrow (Tue) through next Monday inclusive."""
@@ -59,13 +70,13 @@ def match_weekdays_next_7_days(client):
     end = today + timedelta(days=7)     # next Monday
 
     dows = set()
-    ss = client.open_by_key(FIXTURES_SHEET_ID)
+    ss = retry_gspread(client.open_by_key, FIXTURES_SHEET_ID)
     for tab in (FRIENDLY_TAB, LEAGUECUP_TAB):
         try:
-            ws = ss.worksheet(tab)
+            ws = retry_gspread(ss.worksheet, tab)
         except Exception:
             continue
-        for row in ws.get_all_values()[1:]:
+        for row in retry_gspread(ws.get_all_values)[1:]:
             if len(row) <= FX_STATUS:
                 continue
             if (row[FX_STATUS] or '').strip() != 'Completed':
