@@ -2,7 +2,7 @@ name: Lineup Poster
 
 on:
   schedule:
-    - cron: '0 8-18 * * 0,6'
+    - cron: '0 8-18 * * 0,1'
   workflow_dispatch:
 
 permissions:
