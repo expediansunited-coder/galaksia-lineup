@@ -870,25 +870,16 @@ def build_lineup_image(bg_img, font_path, team, starters, subs, captain,
             last_line_bottom = lb[3]
             y += SUB_GAP
 
-    # ---- Bottom-right: FRIENDLY text OR league logo ----
+    # ---- Bottom-right: FRIENDLY text only ----
     is_friendly = (match_type or '').strip().lower() == 'friendly'
     if is_friendly:
         ctx_font = load_font(font_path, CONTEXT_SIZE)
         cb = draw.textbbox((0, 0), 'FRIENDLY', font=ctx_font)
-        cw = cb[2] - cb[0]; ch = cb[3] - cb[1]
+        cw = cb[2] - cb[0]
+        ch = cb[3] - cb[1]
         cx = away_right - cw
         cy = last_line_bottom - ch
         draw.text((cx, cy), 'FRIENDLY', font=ctx_font, fill=WHITE)
-    elif league_logo is not None:
-        ll = remove_edge_background(league_logo)
-        cbx = ll.getbbox()
-        if cbx:
-            ll = ll.crop(cbx)
-        scale = LEAGUE_LOGO_H / ll.height
-        ll = ll.resize((max(1, int(ll.width * scale)), LEAGUE_LOGO_H), Image.LANCZOS)
-        lx = away_right - ll.width
-        ly = last_line_bottom - ll.height
-        bg.alpha_composite(ll if ll.mode == 'RGBA' else ll.convert('RGBA'), (lx, ly))
 
     return bg.convert('RGB')
 
@@ -1048,11 +1039,9 @@ def run_11aside_lineups():
     client = get_gspread_client()
     drive = get_drive_service()
 
-    team_league = build_team_league_map(client)
     font_path = ensure_font(drive)
 
     logo_files = list_folder_files(drive, OPP_LOGO_FOLDER_ID)
-    league_files = list_folder_files(drive, LEAGUE_LOGO_FOLDER_ID)
     bg_files = [f for f in list_folder_files(drive, BACKGROUNDS_FOLDER_ID)
                 if f['name'].lower().endswith(IMG_EXT)
                 or (f.get('mimeType', '').startswith('image/'))]
@@ -1062,8 +1051,7 @@ def run_11aside_lineups():
         return
 
     logo_cache = {}
-    league_cache = {}
-
+    
     ss = client.open_by_key(LINEUPS_SHEET_ID)
     today = datetime.now(PRAGUE_TZ).date()
     generated = 0
@@ -1129,22 +1117,6 @@ def run_11aside_lineups():
             away_logo = resolve_logo(logo_files, drive, away, logo_cache)
 
             league_logo = None
-            if (match_type or '').strip().lower() != 'friendly':
-                league = team_league.get(team.lower(), '')
-                if league:
-                    lk = _norm(league)
-                    if lk not in league_cache:
-                        lf = find_logo_file(league_files, league)
-                        if lf:
-                            try:
-                                d = download_file_bytes(drive, lf['id'])
-                                league_cache[lk] = Image.open(io.BytesIO(d)).convert('RGBA')
-                            except Exception:
-                                league_cache[lk] = None
-                        else:
-                            league_cache[lk] = None
-                            errors.append('%s row %d: no league logo for "%s".' % (team, i, league))
-                    league_logo = league_cache[lk]
 
             # 11B uses its named background; others keep random.
             if team == '11B':
