@@ -1084,7 +1084,7 @@ def run_11aside_lineups():
 
             if not match_date or match_date != today:
                 continue
-            if status:
+            if status.strip().lower() == 'sent':
                 print('%s row %d: already sent, skipping.' % (team, i))
                 continue
 
