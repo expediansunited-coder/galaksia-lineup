@@ -6,6 +6,8 @@ google-auth-oauthlib
 Pillow
 pillow-heif
 requests
-rembg[cpu]
+transformers
+einops
+kornia
 rawpy
 numpy
