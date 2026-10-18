@@ -6,8 +6,10 @@ google-auth-oauthlib
 Pillow
 pillow-heif
 requests
+rawpy
+numpy
+torch
+torchvision
 transformers
 einops
 kornia
-rawpy
-numpy
