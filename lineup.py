@@ -7,7 +7,9 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from rembg import remove
+import torch
+from torchvision import transforms
+from transformers import AutoModelForImageSegmentation
 
 PRAGUE_TZ = ZoneInfo('Europe/Prague')
 import rawpy
@@ -582,6 +584,62 @@ def find_player_folder_id(drive, player_name):
             return f['id'], f['name']
     return None, None
 
+# ============================================================
+# BIREFNET BACKGROUND REMOVAL FOR PLAYER PHOTOS
+# ============================================================
+BIR_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+_BIR_MODEL = None
+
+_BIR_TRANSFORM = transforms.Compose([
+    transforms.Resize((1024, 1024)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        [0.485, 0.456, 0.406],
+        [0.229, 0.224, 0.225]
+    )
+])
+
+
+def get_birefnet_model():
+    global _BIR_MODEL
+
+    if _BIR_MODEL is None:
+        print(f'Loading BiRefNet on {BIR_DEVICE}...')
+
+        _BIR_MODEL = AutoModelForImageSegmentation.from_pretrained(
+            "ZhengPeng7/BiRefNet",
+            trust_remote_code=True
+        )
+
+        _BIR_MODEL = _BIR_MODEL.to(BIR_DEVICE)
+        _BIR_MODEL = _BIR_MODEL.float()
+        _BIR_MODEL.eval()
+
+        print('BiRefNet dtype:', next(_BIR_MODEL.parameters()).dtype)
+
+    return _BIR_MODEL
+
+
+def remove_bg_birefnet(data):
+    image = Image.open(io.BytesIO(data)).convert("RGB")
+    original_size = image.size
+
+    model = get_birefnet_model()
+    input_tensor = _BIR_TRANSFORM(image).unsqueeze(0)
+    input_tensor = input_tensor.to(device=BIR_DEVICE, dtype=torch.float32)
+
+    with torch.no_grad():
+        pred = model(input_tensor)[-1].sigmoid().detach().cpu()[0].squeeze()
+
+    pred = pred.float()
+
+    mask = transforms.ToPILImage()(pred)
+    mask = mask.resize(original_size, Image.LANCZOS)
+
+    out = image.convert("RGBA")
+    out.putalpha(mask)
+
+    return out
 
 def get_random_player_photo(drive, player_name):
     folder_id, folder_name = find_player_folder_id(drive, player_name)
@@ -605,8 +663,7 @@ def get_random_player_photo(drive, player_name):
         try:
             data = download_file_bytes(drive, choice['id'])
             Image.open(io.BytesIO(data)).verify()
-            cut = remove(data)
-            img = Image.open(io.BytesIO(cut)).convert('RGBA')
+            img = remove_bg_birefnet(data)
             img = crop_to_content(img)
             w, h = img.size
             img = img.crop((0, 0, w, int(h * 5 / 8)))
