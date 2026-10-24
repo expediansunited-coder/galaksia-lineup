@@ -13,3 +13,4 @@ torchvision
 transformers
 einops
 kornia
+timm
