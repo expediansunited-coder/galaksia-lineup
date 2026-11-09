@@ -490,7 +490,21 @@ def find_fixture(client, team, match_date):
 
 def clean_team_name(name):
     s = (name or '').strip()
-    s = re.sub(r'\s*,?\s*(z\.s\.|a\.s\.)\s*$', '', s, flags=re.I)
+
+    # "C" -> C, but keep it as a separate team-level token.
+    s = re.sub(r'["“”„‟]\s*([A-ZÁ-ŽA-Za-z])\s*["“”„‟]', r' \1', s)
+
+    # Remove legal suffixes only when they are separate tokens.
+    s = re.sub(
+        r'(?:^|[\s,]+)(z\s*\.?\s*s|s\s*\.?\s*r\s*\.?\s*o|a\s*\.?\s*s|o\s*\.?\s*s)\.?(?=\s|$)',
+        ' ',
+        s,
+        flags=re.I
+    )
+
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(r'\s*,\s*$', '', s)
+
     return s.strip()
 
 def display_team_name(name):
